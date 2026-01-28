@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -9,7 +10,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DanielLavrushin/url-recon/jobs"
@@ -39,6 +42,7 @@ func main() {
 	// API endpoints with CSRF protection
 	http.HandleFunc("/api/jobs", csrfProtection(handleJobs))     // POST to create
 	http.HandleFunc("/api/jobs/", handleJobByID)                 // GET /:id and GET /:id/stream
+	http.HandleFunc("/api/queue/stats", handleQueueStats)        // GET queue stats
 
 	// Serve the embedded frontend
 	distFS, err := fs.Sub(uiFS, "http/ui/dist")
@@ -51,8 +55,37 @@ func main() {
 	http.Handle("/", http.FileServer(http.FS(distFS)))
 
 	log.Println("Security: TRUST_PROXY =", trustProxy)
+
+	// Initialize browser pool
+	_ = scanner.GetPool()
+	log.Println("Browser pool initialized")
+
+	// Create server for graceful shutdown
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: handler,
+	}
+
+	// Handle shutdown signals
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+
+		log.Println("Shutting down server...")
+
+		// Shutdown HTTP server with timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		server.Shutdown(ctx)
+
+		// Shutdown browser pool
+		scanner.ShutdownPool()
+		log.Println("Cleanup complete")
+	}()
+
 	log.Println("Server starting on http://localhost:8080")
-	if err := http.ListenAndServe(":8080", handler); err != nil {
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
@@ -202,10 +235,31 @@ func handleJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	message := "Job created successfully"
+	if job.QueuePosition > 0 {
+		message = fmt.Sprintf("Job queued at position %d", job.QueuePosition)
+	}
+
 	writeJSON(w, http.StatusCreated, jobs.CreateJobResponse{
-		JobID:   job.ID,
-		Status:  job.Status,
-		Message: "Job created successfully",
+		JobID:         job.ID,
+		Status:        job.Status,
+		QueuePosition: job.QueuePosition,
+		Message:       message,
+	})
+}
+
+// handleQueueStats returns current queue statistics
+func handleQueueStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	running, queued, maxConcurrent := jobManager.GetQueueStats()
+	writeJSON(w, http.StatusOK, jobs.QueueStatsResponse{
+		Running:       running,
+		Queued:        queued,
+		MaxConcurrent: maxConcurrent,
 	})
 }
 

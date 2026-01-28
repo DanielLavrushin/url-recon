@@ -11,7 +11,9 @@ import {
   Alert,
   Stack,
   Box,
+  Link,
 } from "@mui/material";
+import GitHubIcon from "@mui/icons-material/GitHub";
 import SearchIcon from "@mui/icons-material/Search";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 
@@ -144,6 +146,33 @@ function App() {
           </>
         )}
       </Container>
+      <Box
+        component="footer"
+        sx={{
+          py: 2,
+          textAlign: "center",
+          borderTop: 1,
+          borderColor: "divider",
+          mt: "auto",
+        }}
+      >
+        <Link
+          href="https://github.com/DanielLavrushin/url-recon"
+          target="_blank"
+          rel="noopener noreferrer"
+          sx={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 0.5,
+            color: "text.secondary",
+            textDecoration: "none",
+            "&:hover": { color: "primary.main" },
+          }}
+        >
+          <GitHubIcon fontSize="small" />
+          by Daniel Lavrushin
+        </Link>
+      </Box>
     </ThemeProvider>
   );
 }

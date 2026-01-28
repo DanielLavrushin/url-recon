@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -40,37 +39,29 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 
 	onProgress("Starting browser", 0, 0)
 
-	// Build chromedp options
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("headless", true),
-		chromedp.Flag("disable-gpu", true),
-	)
-
-	// Only add --no-sandbox if explicitly requested via environment variable
-	// WARNING: This should only be used in containerized environments where
-	// the sandbox cannot run (e.g., Docker without --cap-add=SYS_ADMIN)
-	if os.Getenv("CHROMEDP_NO_SANDBOX") == "true" {
-		opts = append(opts, chromedp.Flag("no-sandbox", true))
+	// Acquire browser from pool
+	pool := GetPool()
+	browser, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire browser: %w", err)
 	}
+	defer pool.Release(browser)
 
-	// Create chromedp context
-	allocCtx, cancel := chromedp.NewExecAllocator(ctx, opts...)
-	defer cancel()
+	// Create a new tab with timeout
+	tabCtx, tabCancel := browser.NewTab(ctx)
+	defer tabCancel()
 
-	chromedpCtx, cancel := chromedp.NewContext(allocCtx)
-	defer cancel()
-
-	// Set timeout
-	chromedpCtx, cancel = context.WithTimeout(chromedpCtx, 30*time.Second)
+	// Set timeout for the entire operation (15s instead of 30s - pool is faster)
+	tabCtx, cancel := context.WithTimeout(tabCtx, 15*time.Second)
 	defer cancel()
 
 	onProgress("Loading page", 0, 0)
 
 	var html string
-	err = chromedp.Run(chromedpCtx,
+	err = chromedp.Run(tabCtx,
 		chromedp.Navigate(targetURL),
-		chromedp.WaitReady("body"),
-		chromedp.Sleep(2*time.Second), // Allow JS to execute
+		// Smart wait: adapts to page load instead of fixed 2s sleep
+		WaitWithTimeout(tabCtx, 5*time.Second),
 		chromedp.OuterHTML("html", &html),
 	)
 	if err != nil {
