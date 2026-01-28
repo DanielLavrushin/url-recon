@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
@@ -29,7 +30,12 @@ var uiFS embed.FS
 
 var jobManager *jobs.Manager
 
+var port int
+
 func main() {
+	flag.IntVar(&port, "port", 8080, "HTTP server port")
+	flag.Parse()
+
 	// Load ASN database at startup
 	if err := scanner.LoadIPRanges(); err != nil {
 		log.Fatalf("Failed to load IP-to-ASN database: %v", err)
@@ -61,8 +67,9 @@ func main() {
 	log.Println("Browser pool initialized")
 
 	// Create server for graceful shutdown
+	addr := fmt.Sprintf(":%d", port)
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    addr,
 		Handler: handler,
 	}
 
@@ -84,7 +91,7 @@ func main() {
 		log.Println("Cleanup complete")
 	}()
 
-	log.Println("Server starting on http://localhost:8080")
+	log.Printf("Server starting on http://localhost:%d", port)
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
@@ -166,7 +173,7 @@ func csrfProtection(next http.HandlerFunc) http.HandlerFunc {
 					// For cross-origin, this will block unless we add CORS
 					host := r.Host
 					if !strings.HasSuffix(origin, "://"+host) &&
-						!strings.HasSuffix(origin, "://localhost:8080") &&
+						!strings.HasSuffix(origin, fmt.Sprintf("://localhost:%d", port)) &&
 						origin != "null" { // null origin for file:// or data:// - block these
 						writeJSON(w, http.StatusForbidden, jobs.ErrorResponse{
 							Error: "Cross-origin requests not allowed",

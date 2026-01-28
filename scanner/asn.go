@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -66,14 +68,18 @@ func LoadIPRanges() error {
 	return rangesError
 }
 
+const ip2asnURL = "https://iptoasn.com/data/ip2asn-combined.tsv.gz"
+
 func findDataFile() (string, error) {
 	names := []string{"ip2asn-combined.tsv", "ip2asn-combined.tsv.gz"}
 
 	// Check paths in order
 	paths := []string{"."}
 
+	var reconDir string
 	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths, home, filepath.Join(home, ".recon"))
+		reconDir = filepath.Join(home, ".recon")
+		paths = append(paths, home, reconDir)
 	}
 
 	// Also check next to executable
@@ -90,7 +96,45 @@ func findDataFile() (string, error) {
 		}
 	}
 
-	return "", errors.New("IP-to-ASN database not found")
+	// Not found locally — download it
+	if reconDir == "" {
+		return "", errors.New("IP-to-ASN database not found and cannot determine home directory")
+	}
+
+	dest := filepath.Join(reconDir, "ip2asn-combined.tsv.gz")
+	if err := downloadFile(ip2asnURL, dest); err != nil {
+		return "", fmt.Errorf("IP-to-ASN database not found and download failed: %w", err)
+	}
+	return dest, nil
+}
+
+func downloadFile(url, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download returned status %d", resp.StatusCode)
+	}
+
+	f, err := os.Create(dest)
+	if err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		os.Remove(dest) // clean up partial file
+		return fmt.Errorf("write file: %w", err)
+	}
+
+	return nil
 }
 
 func loadIPRangesInternal() error {
