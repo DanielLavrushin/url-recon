@@ -14,17 +14,14 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-// ProgressFunc is called with progress updates during scanning
 type ProgressFunc func(stage string, current, total int)
 
 func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Result, error) {
 	if onProgress == nil {
 		onProgress = func(string, int, int) {
-			// no-op
 		}
 	}
 
-	// Validate URL and check for SSRF before proceeding
 	validatedURL, err := ValidateURL(targetURL)
 	if err != nil {
 		return nil, fmt.Errorf("URL validation failed: %w", err)
@@ -39,7 +36,6 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 
 	onProgress("Starting browser", 0, 0)
 
-	// Acquire browser from pool
 	pool := GetPool()
 	browser, err := pool.Acquire(ctx)
 	if err != nil {
@@ -47,11 +43,9 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 	}
 	defer pool.Release(browser)
 
-	// Create a new tab with timeout
 	tabCtx, tabCancel := browser.NewTab(ctx)
 	defer tabCancel()
 
-	// Set timeout for the entire operation (15s instead of 30s - pool is faster)
 	tabCtx, cancel := context.WithTimeout(tabCtx, 15*time.Second)
 	defer cancel()
 
@@ -60,7 +54,6 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 	var html string
 	err = chromedp.Run(tabCtx,
 		chromedp.Navigate(targetURL),
-		// Smart wait: adapts to page load instead of fixed 2s sleep
 		WaitWithTimeout(tabCtx, 5*time.Second),
 		chromedp.OuterHTML("html", &html),
 	)
@@ -72,7 +65,6 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 	domains := extractDomains(html, targetDomain)
 
 	onProgress("Resolving DNS", 0, len(domains))
-	// Resolve IPs and detect CDNs in parallel
 	resolveDomainInfo(domains, onProgress)
 
 	onProgress("Complete", len(domains), len(domains))
@@ -90,7 +82,7 @@ func resolveDomainInfo(domains []DomainInfo, onProgress ProgressFunc) {
 	var wg sync.WaitGroup
 	var resolved int
 	var mu sync.Mutex
-	sem := make(chan struct{}, 20) // Limit concurrent lookups
+	sem := make(chan struct{}, 20)
 	total := len(domains)
 
 	for i := range domains {
@@ -100,13 +92,11 @@ func resolveDomainInfo(domains []DomainInfo, onProgress ProgressFunc) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			// Resolve IPs
 			ips, err := net.LookupHost(d.Domain)
 			if err == nil {
 				d.IPs = ips
 			}
 
-			// Detect CDN via IP-to-ASN lookup
 			if len(d.IPs) > 0 {
 				d.CDN = detectCDNByASN(d.IPs)
 			}
@@ -121,9 +111,8 @@ func resolveDomainInfo(domains []DomainInfo, onProgress ProgressFunc) {
 }
 
 func extractDomains(html string, targetDomain string) []DomainInfo {
-	domainMap := make(map[string]map[string]bool) // domain -> set of sources
+	domainMap := make(map[string]map[string]bool)
 
-	// Patterns to extract URLs from various attributes
 	patterns := []struct {
 		regex  *regexp.Regexp
 		source string
@@ -133,7 +122,6 @@ func extractDomains(html string, targetDomain string) []DomainInfo {
 		{regexp.MustCompile(`srcset=["']([^"']+)["']`), "srcset"},
 		{regexp.MustCompile(`url\(["']?([^"')]+)["']?\)`), "css-url"},
 		{regexp.MustCompile(`action=["']([^"']+)["']`), "form-action"},
-		{regexp.MustCompile(`data-[a-z-]+=["'](https?://[^"']+)["']`), "data-attr"},
 		{regexp.MustCompile(`content=["'](https?://[^"']+)["']`), "meta"},
 		{regexp.MustCompile(`https?://[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+[^\s"'<>]*`), "inline"},
 	}
@@ -146,7 +134,6 @@ func extractDomains(html string, targetDomain string) []DomainInfo {
 			}
 			urlStr := match[1]
 
-			// Handle srcset (comma-separated URLs with sizes)
 			if p.source == "srcset" {
 				parts := strings.Split(urlStr, ",")
 				for _, part := range parts {
@@ -163,7 +150,6 @@ func extractDomains(html string, targetDomain string) []DomainInfo {
 		}
 	}
 
-	// Convert map to slice
 	var result []DomainInfo
 	for domain, sources := range domainMap {
 		sourceList := make([]string, 0, len(sources))
@@ -184,10 +170,9 @@ func extractDomains(html string, targetDomain string) []DomainInfo {
 		})
 	}
 
-	// Sort by count descending, then by domain name
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].External != result[j].External {
-			return result[i].External // External first
+			return result[i].External
 		}
 		if result[i].Count != result[j].Count {
 			return result[i].Count > result[j].Count
@@ -199,7 +184,6 @@ func extractDomains(html string, targetDomain string) []DomainInfo {
 }
 
 func addDomain(domainMap map[string]map[string]bool, urlStr string, source string) {
-	// Try to parse as URL
 	parsed, err := url.Parse(strings.TrimSpace(urlStr))
 	if err != nil {
 		return
@@ -210,12 +194,10 @@ func addDomain(domainMap map[string]map[string]bool, urlStr string, source strin
 		return
 	}
 
-	// Skip IP addresses and localhost
 	if isIP(host) || host == "localhost" {
 		return
 	}
 
-	// Skip common data URIs and invalid domains
 	if !strings.Contains(host, ".") {
 		return
 	}

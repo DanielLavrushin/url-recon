@@ -1,0 +1,16 @@
+{
+  "remove-comments.keep": {
+    "#grp1,go": {
+      "region": {
+        "regex": "^go:embed",
+        "flags": "i"
+      }
+    },
+    "#grp2,go": {
+      "region": {
+        "regex": "^\\[",
+        "flags": "i"
+      }
+    }
+  }
+}

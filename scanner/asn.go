@@ -21,10 +21,8 @@ import (
 //go:embed asn.json
 var asnProvidersJSON []byte
 
-// asnProviders maps ASN numbers to CDN/provider names
 var asnProviders map[string]string
 
-// ipRange represents a range of IPs belonging to a CDN
 type ipRange struct {
 	StartIP  uint32
 	EndIP    uint32
@@ -43,7 +41,6 @@ func init() {
 	}
 }
 
-// ipToUint32 converts an IPv4 address to uint32 for fast comparison
 func ipToUint32(ipStr string) (uint32, error) {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
@@ -56,11 +53,6 @@ func ipToUint32(ipStr string) (uint32, error) {
 	return binary.BigEndian.Uint32(ip), nil
 }
 
-// LoadIPRanges loads and parses the ip2asn TSV file, filtering only CDN ASNs
-// Looks for ip2asn-combined.tsv or ip2asn-combined.tsv.gz in:
-// 1. Current directory
-// 2. Scanner data directory
-// 3. Home directory
 func LoadIPRanges() error {
 	rangesOnce.Do(func() {
 		rangesError = loadIPRangesInternal()
@@ -73,7 +65,6 @@ const ip2asnURL = "https://iptoasn.com/data/ip2asn-combined.tsv.gz"
 func findDataFile() (string, error) {
 	names := []string{"ip2asn-combined.tsv", "ip2asn-combined.tsv.gz"}
 
-	// Check paths in order
 	paths := []string{"."}
 
 	var reconDir string
@@ -82,7 +73,6 @@ func findDataFile() (string, error) {
 		paths = append(paths, home, reconDir)
 	}
 
-	// Also check next to executable
 	if exe, err := os.Executable(); err == nil {
 		paths = append(paths, filepath.Dir(exe))
 	}
@@ -96,7 +86,6 @@ func findDataFile() (string, error) {
 		}
 	}
 
-	// Not found locally — download it
 	if reconDir == "" {
 		return "", errors.New("IP-to-ASN database not found and cannot determine home directory")
 	}
@@ -130,7 +119,7 @@ func downloadFile(url, dest string) error {
 	defer f.Close()
 
 	if _, err := io.Copy(f, resp.Body); err != nil {
-		os.Remove(dest) // clean up partial file
+		os.Remove(dest)
 		return fmt.Errorf("write file: %w", err)
 	}
 
@@ -151,7 +140,6 @@ func loadIPRangesInternal() error {
 
 	var scanner *bufio.Scanner
 
-	// Handle gzip if needed
 	if strings.HasSuffix(path, ".gz") {
 		gzReader, err := gzip.NewReader(file)
 		if err != nil {
@@ -163,7 +151,6 @@ func loadIPRangesInternal() error {
 		scanner = bufio.NewScanner(file)
 	}
 
-	// Pre-allocate slice (estimate ~1000 CDN ranges)
 	ipRanges = make([]ipRange, 0, 1000)
 
 	for scanner.Scan() {
@@ -199,7 +186,6 @@ func loadIPRangesInternal() error {
 		return fmt.Errorf("error reading file: %w", err)
 	}
 
-	// Sort by StartIP for binary search
 	sort.Slice(ipRanges, func(i, j int) bool {
 		return ipRanges[i].StartIP < ipRanges[j].StartIP
 	})
@@ -207,7 +193,6 @@ func loadIPRangesInternal() error {
 	return nil
 }
 
-// detectCDNByIP checks if an IP belongs to a known CDN provider
 func detectCDNByIP(ipStr string) string {
 	if err := LoadIPRanges(); err != nil {
 		return ""
@@ -218,12 +203,10 @@ func detectCDNByIP(ipStr string) string {
 		return ""
 	}
 
-	// Binary search to find potential range
 	idx := sort.Search(len(ipRanges), func(i int) bool {
 		return ipRanges[i].StartIP > ip
 	})
 
-	// Check the range before (if exists) - it might contain our IP
 	if idx > 0 {
 		r := ipRanges[idx-1]
 		if ip >= r.StartIP && ip <= r.EndIP {
@@ -234,10 +217,9 @@ func detectCDNByIP(ipStr string) string {
 	return ""
 }
 
-// detectCDNByASN checks IPs against known CDN IP ranges
 func detectCDNByASN(ips []string) string {
 	for _, ip := range ips {
-		// Skip IPv6
+
 		if strings.Contains(ip, ":") {
 			continue
 		}
@@ -248,7 +230,6 @@ func detectCDNByASN(ips []string) string {
 	return ""
 }
 
-// GetLoadedRangeCount returns the number of IP ranges loaded (for debugging)
 func GetLoadedRangeCount() int {
 	if err := LoadIPRanges(); err != nil {
 		return 0
@@ -256,7 +237,6 @@ func GetLoadedRangeCount() int {
 	return len(ipRanges)
 }
 
-// GetASNForIP returns the provider name for an IP (exported for testing)
 func GetASNForIP(ip string) (string, error) {
 	if err := LoadIPRanges(); err != nil {
 		return "", err
@@ -268,14 +248,12 @@ func GetASNForIP(ip string) (string, error) {
 	return provider, nil
 }
 
-// ReloadIPRanges forces a reload of the IP ranges (useful after updating the TSV file)
 func ReloadIPRanges() error {
 	rangesOnce = sync.Once{}
 	ipRanges = nil
 	return LoadIPRanges()
 }
 
-// GetASNProviders returns the ASN to provider mapping (for debugging/info)
 func GetASNProviders() map[string]string {
 	result := make(map[string]string, len(asnProviders))
 	for k, v := range asnProviders {
