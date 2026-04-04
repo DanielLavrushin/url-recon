@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"regexp"
@@ -27,6 +28,15 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 		return nil, fmt.Errorf("URL validation failed: %w", err)
 	}
 	targetURL = validatedURL
+
+	// Check cache before launching a browser
+	if scanCache != nil {
+		if cached, ok := scanCache.Get(targetURL); ok {
+			log.Printf("Cache hit for %s", targetURL)
+			onProgress("Complete", len(cached.Domains), len(cached.Domains))
+			return cached, nil
+		}
+	}
 
 	parsed, err := url.Parse(targetURL)
 	if err != nil {
@@ -69,13 +79,20 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 
 	onProgress("Complete", len(domains), len(domains))
 
-	return &Result{
+	result := &Result{
 		TargetURL:    targetURL,
 		TargetDomain: targetDomain,
 		Domains:      domains,
 		Stats:        calculateStats(domains),
 		ScannedAt:    time.Now(),
-	}, nil
+	}
+
+	// Store result in cache for future lookups
+	if scanCache != nil {
+		scanCache.Set(targetURL, result)
+	}
+
+	return result, nil
 }
 
 func resolveDomainInfo(domains []DomainInfo, onProgress ProgressFunc) {

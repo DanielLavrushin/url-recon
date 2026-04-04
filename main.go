@@ -40,6 +40,8 @@ func main() {
 	}
 	log.Printf("Loaded %d CDN IP ranges", scanner.GetLoadedRangeCount())
 
+	scanner.InitCache(3 * 24 * time.Hour)
+
 	jobManager = jobs.NewManager(1*time.Hour, 5*time.Minute)
 
 	http.HandleFunc("/api/jobs", csrfProtection(handleJobs))
