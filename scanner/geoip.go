@@ -14,9 +14,6 @@ import (
 	"github.com/DanielLavrushin/url-recon/geodat"
 )
 
-// geoIPMap maps each CIDR prefix to its category name.
-// Using netip.Prefix as key allows O(1) lookups per prefix length,
-// so total lookup cost is O(32) for IPv4 or O(128) for IPv6.
 var (
 	geoIPMap  map[netip.Prefix]string
 	geoIPOnce sync.Once
@@ -26,8 +23,6 @@ var (
 
 const geoIPDownloadURL = "https://github.com/DanielLavrushin/b4geoip/releases/latest/download/geoip.dat"
 
-// LoadGeoIP loads the geoip.dat file and builds the IP-to-provider lookup map.
-// Only non-country categories (len > 2) are loaded as provider/service categories.
 func LoadGeoIP(path string) error {
 	geoIPPath = path
 	geoIPOnce.Do(func() {
@@ -37,12 +32,6 @@ func LoadGeoIP(path string) error {
 }
 
 func findGeoIPFile() (string, error) {
-	if geoIPPath != "" {
-		if _, err := os.Stat(geoIPPath); err == nil {
-			return geoIPPath, nil
-		}
-	}
-
 	name := "geoip.dat"
 
 	var exeDir string
@@ -50,26 +39,33 @@ func findGeoIPFile() (string, error) {
 		exeDir = filepath.Dir(exe)
 	}
 
-	searchPaths := []string{"."}
-	if exeDir != "" {
-		searchPaths = append(searchPaths, exeDir)
-	}
-
-	for _, dir := range searchPaths {
-		p := filepath.Join(dir, name)
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
+	dest := geoIPPath
+	if dest == "" {
+		destDir := "."
+		if exeDir != "" {
+			destDir = exeDir
 		}
+		dest = filepath.Join(destDir, name)
 	}
 
-	destDir := "."
-	if exeDir != "" {
-		destDir = exeDir
-	}
-	dest := filepath.Join(destDir, name)
 	log.Printf("GeoIP: downloading geoip.dat to %s ...", dest)
 	if err := downloadFile(geoIPDownloadURL, dest); err != nil {
-		return "", fmt.Errorf("geoip.dat not found and download failed: %w", err)
+		if _, statErr := os.Stat(dest); statErr == nil {
+			log.Printf("GeoIP: download failed (%v), using existing file", err)
+			return dest, nil
+		}
+		searchPaths := []string{"."}
+		if exeDir != "" {
+			searchPaths = append(searchPaths, exeDir)
+		}
+		for _, dir := range searchPaths {
+			p := filepath.Join(dir, name)
+			if _, statErr := os.Stat(p); statErr == nil {
+				log.Printf("GeoIP: download failed (%v), using existing file at %s", err, p)
+				return p, nil
+			}
+		}
+		return "", fmt.Errorf("geoip.dat download failed and no existing file found: %w", err)
 	}
 	log.Printf("GeoIP: download complete")
 	return dest, nil
@@ -81,7 +77,6 @@ func loadGeoIPInternal() error {
 		return err
 	}
 
-	// Single pass: load only service categories (not 2-letter country codes)
 	prefixMap, err := geodat.LoadServiceIPPrefixes(path, func(category string) bool {
 		return len(category) > 2
 	})
@@ -99,7 +94,6 @@ func loadGeoIPInternal() error {
 		total += len(prefixes)
 	}
 
-	// Build prefix→category map for O(1) lookups per prefix length
 	geoIPMap = make(map[netip.Prefix]string, total)
 	for category, prefixes := range prefixMap {
 		for _, prefix := range prefixes {
@@ -112,8 +106,6 @@ func loadGeoIPInternal() error {
 	return nil
 }
 
-// detectProviderByGeoIP checks the given IPs against the geoip.dat service categories.
-// Uses map lookups across prefix lengths: O(32) for IPv4, O(128) for IPv6.
 func detectProviderByGeoIP(ips []string) string {
 	for _, ipStr := range ips {
 		addr, err := netip.ParseAddr(ipStr)

@@ -16,6 +16,8 @@ import {
 import GitHubIcon from "@mui/icons-material/GitHub";
 import SearchIcon from "@mui/icons-material/Search";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import LinkIcon from "@mui/icons-material/Link";
+import HistoryToggleOffIcon from "@mui/icons-material/HistoryToggleOff";
 
 import { theme } from "./theme";
 import { useJobManager } from "./hooks/useJobManager";
@@ -27,8 +29,26 @@ function App() {
   const [url, setUrl] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
 
-  const { jobId, progress, result, error, isLoading, startScan } =
-    useJobManager();
+  const {
+    jobId,
+    progress,
+    result,
+    error,
+    isLoading,
+    isExpired,
+    jobUrl,
+    startScan,
+    clearJob,
+  } = useJobManager();
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  const handleCopyLink = useCallback(() => {
+    if (jobUrl) {
+      navigator.clipboard.writeText(jobUrl);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    }
+  }, [jobUrl]);
 
   const handleScan = useCallback(async () => {
     if (!url.trim()) return;
@@ -79,13 +99,26 @@ function App() {
             </Button>
           </Stack>
           {jobId && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ mt: 1, display: "block" }}
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ mt: 1 }}
             >
-              Job ID: {jobId}
-            </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Job ID: {jobId}
+              </Typography>
+              {jobUrl && (
+                <Button
+                  size="small"
+                  startIcon={<LinkIcon />}
+                  onClick={handleCopyLink}
+                  sx={{ textTransform: "none", minWidth: 0, fontSize: "0.75rem" }}
+                >
+                  {linkCopied ? "Copied!" : "Copy link"}
+                </Button>
+              )}
+            </Stack>
           )}
         </Paper>
 
@@ -94,6 +127,21 @@ function App() {
         {error && (
           <Alert severity="error" sx={{ mb: 4 }}>
             {error}
+          </Alert>
+        )}
+
+        {isExpired && (
+          <Alert
+            severity="info"
+            icon={<HistoryToggleOffIcon />}
+            action={
+              <Button color="inherit" size="small" onClick={clearJob}>
+                New Scan
+              </Button>
+            }
+            sx={{ mb: 4 }}
+          >
+            Scan results are no longer available. Results expire after some time.
           </Alert>
         )}
 

@@ -52,8 +52,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	fileServer := http.FileServer(http.FS(distFS))
+	http.HandleFunc("/job/{id}", func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
+	})
+	http.Handle("/", fileServer)
 	handler := securityHeaders(http.DefaultServeMux)
-	http.Handle("/", http.FileServer(http.FS(distFS)))
 
 	log.Println("Security: TRUST_PROXY =", trustProxy)
 
