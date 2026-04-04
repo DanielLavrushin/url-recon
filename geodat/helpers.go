@@ -2,6 +2,7 @@ package geodat
 
 import (
 	"net/netip"
+	"os"
 	"strings"
 
 	"github.com/urlesistiana/v2dat/v2data"
@@ -74,6 +75,45 @@ func LoadIPPrefixes(geodataPath string, categories []string) (map[string][]netip
 
 	if err := streamGeoIP(geodataPath, categories, save); err != nil {
 		return nil, err
+	}
+
+	return result, nil
+}
+
+// LoadServiceIPPrefixes reads geoip.dat in a single pass and returns prefixes
+// grouped by category, including only categories where accept returns true.
+func LoadServiceIPPrefixes(geodataPath string, accept func(category string) bool) (map[string][]netip.Prefix, error) {
+	if geodataPath == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(geodataPath)
+	if err != nil {
+		return nil, err
+	}
+
+	geoIPList, err := v2data.LoadGeoIPListFromDAT(data)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string][]netip.Prefix)
+	for _, geo := range geoIPList.GetEntry() {
+		cat := strings.ToLower(geo.GetCountryCode())
+		if !accept(cat) {
+			continue
+		}
+		for _, cidr := range geo.GetCidr() {
+			ip, ok := netip.AddrFromSlice(cidr.Ip)
+			if !ok {
+				continue
+			}
+			prefix, err := ip.Prefix(int(cidr.Prefix))
+			if err != nil {
+				continue
+			}
+			result[cat] = append(result[cat], prefix)
+		}
 	}
 
 	return result, nil
