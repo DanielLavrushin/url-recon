@@ -35,10 +35,9 @@ func main() {
 	flag.IntVar(&port, "port", 8080, "HTTP server port")
 	flag.Parse()
 
-	if err := scanner.LoadIPRanges(); err != nil {
-		log.Fatalf("Failed to load IP-to-ASN database: %v", err)
+	if err := scanner.LoadGeoIP(""); err != nil {
+		log.Fatalf("Failed to load GeoIP database: %v", err)
 	}
-	log.Printf("Loaded %d CDN IP ranges", scanner.GetLoadedRangeCount())
 
 	scanner.InitCache(3 * 24 * time.Hour)
 

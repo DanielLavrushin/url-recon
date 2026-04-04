@@ -115,7 +115,7 @@ func resolveDomainInfo(domains []DomainInfo, onProgress ProgressFunc) {
 			}
 
 			if len(d.IPs) > 0 {
-				d.CDN = detectCDNByASN(d.IPs)
+				d.CDN = detectProviderByGeoIP(d.IPs)
 			}
 
 			mu.Lock()

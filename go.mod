@@ -5,6 +5,8 @@ go 1.25.3
 require (
 	github.com/chromedp/chromedp v0.14.2
 	github.com/google/uuid v1.6.0
+	github.com/urlesistiana/v2dat v0.0.0-20221215035016-47b8ee51fb52
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
