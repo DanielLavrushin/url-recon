@@ -19,6 +19,12 @@ var (
 	geoIPOnce sync.Once
 	geoIPErr  error
 	geoIPPath string
+
+	geoIPSkipCategories = map[string]bool{
+		"ru-blocked-community": true,
+		"ru-blocked":           true,
+		"re-filter":            true,
+	}
 )
 
 const geoIPDownloadURL = "https://github.com/DanielLavrushin/b4geoip/releases/latest/download/geoip.dat"
@@ -107,6 +113,7 @@ func loadGeoIPInternal() error {
 }
 
 func detectProviderByGeoIP(ips []string) string {
+	var fallback string
 	for _, ipStr := range ips {
 		addr, err := netip.ParseAddr(ipStr)
 		if err != nil {
@@ -124,11 +131,17 @@ func detectProviderByGeoIP(ips []string) string {
 				continue
 			}
 			if cat, ok := geoIPMap[prefix]; ok {
+				if geoIPSkipCategories[cat] {
+					if fallback == "" {
+						fallback = cat
+					}
+					continue
+				}
 				return cat
 			}
 		}
 	}
-	return ""
+	return fallback
 }
 
 func downloadFile(url, dest string) error {
