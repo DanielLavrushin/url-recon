@@ -40,7 +40,7 @@ func GetPool() *BrowserPool {
 
 func NewBrowserPool(maxSize int) *BrowserPool {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("headless", true),
+		chromedp.Flag("headless", "new"),
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("disable-dev-shm-usage", true),
 		chromedp.Flag("disable-extensions", true),
@@ -53,6 +53,8 @@ func NewBrowserPool(maxSize int) *BrowserPool {
 		chromedp.Flag("js-flags", "--max-old-space-size=256"),
 		chromedp.Flag("disable-features", "TranslateUI,BlinkGenPropertyTrees"),
 		chromedp.Flag("blink-settings", "imagesEnabled=true"),
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.UserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
 	)
 
 	if os.Getenv("CHROMEDP_NO_SANDBOX") == "true" {

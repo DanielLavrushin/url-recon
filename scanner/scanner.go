@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"net/url"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +20,7 @@ type ProgressFunc func(stage string, current, total int)
 func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Result, error) {
 	if onProgress == nil {
 		onProgress = func(string, int, int) {
+			// No-op
 		}
 	}
 
@@ -62,7 +62,6 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 
 	onProgress("Loading page", 0, 0)
 
-	// Collect domains from network requests via CDP
 	networkDomains := make(map[string]map[string]bool)
 	var netMu sync.Mutex
 	chromedp.ListenTarget(tabCtx, func(ev interface{}) {
@@ -70,70 +69,57 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 			if parsed, err := url.Parse(req.Request.URL); err == nil {
 				host := parsed.Hostname()
 				if host != "" && !isIP(host) && host != "localhost" && strings.Contains(host, ".") {
+					resType := strings.ToLower(req.Type.String())
+					if resType == "" {
+						resType = "other"
+					}
 					netMu.Lock()
 					if networkDomains[host] == nil {
 						networkDomains[host] = make(map[string]bool)
 					}
-					networkDomains[host]["network"] = true
+					networkDomains[host][resType] = true
 					netMu.Unlock()
 				}
 			}
 		}
 	})
 
-	var html string
 	err = chromedp.Run(tabCtx,
 		network.Enable(),
+		chromedp.EmulateViewport(1920, 2080),
 		chromedp.Navigate(targetURL),
 		WaitWithTimeout(tabCtx, 5*time.Second),
-		chromedp.OuterHTML("html", &html),
+		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
+		chromedp.Sleep(2*time.Second),
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	onProgress("Extracting domains", 0, 0)
-	domains := extractDomains(html, targetDomain)
 
-	// Merge network-captured domains into results
 	netMu.Lock()
-	existingDomains := make(map[string]int)
-	for i, d := range domains {
-		existingDomains[d.Domain] = i
-	}
+	var domains []DomainInfo
 	for host, sources := range networkDomains {
-		if idx, exists := existingDomains[host]; exists {
-			// Add "network" source to existing domain
-			found := false
-			for _, s := range domains[idx].Sources {
-				if s == "network" {
-					found = true
-					break
-				}
-			}
-			if !found {
-				domains[idx].Sources = append(domains[idx].Sources, "network")
-				domains[idx].Count = len(domains[idx].Sources)
-			}
-		} else {
-			sourceList := make([]string, 0, len(sources))
-			for s := range sources {
-				sourceList = append(sourceList, s)
-			}
-			isExternal := !strings.HasSuffix(host, targetDomain) &&
-				!strings.HasSuffix(targetDomain, host) &&
-				host != targetDomain
-			domains = append(domains, DomainInfo{
-				Domain:   host,
-				Count:    len(sourceList),
-				Sources:  sourceList,
-				External: isExternal,
-			})
+		sourceList := make([]string, 0, len(sources))
+		for s := range sources {
+			sourceList = append(sourceList, s)
 		}
+		sort.Strings(sourceList)
+
+		isExternal := !strings.HasSuffix(host, targetDomain) &&
+			!strings.HasSuffix(targetDomain, host) &&
+			host != targetDomain
+
+		domains = append(domains, DomainInfo{
+			Domain:   host,
+			Count:    len(sourceList),
+			Sources:  sourceList,
+			External: isExternal,
+		})
 	}
 	netMu.Unlock()
 
-	// Re-sort after merge
 	sort.Slice(domains, func(i, j int) bool {
 		if domains[i].External != domains[j].External {
 			return domains[i].External
@@ -195,104 +181,6 @@ func resolveDomainInfo(domains []DomainInfo, onProgress ProgressFunc) {
 		}(&domains[i])
 	}
 	wg.Wait()
-}
-
-func extractDomains(html string, targetDomain string) []DomainInfo {
-	domainMap := make(map[string]map[string]bool)
-
-	patterns := []struct {
-		regex  *regexp.Regexp
-		source string
-	}{
-		{regexp.MustCompile(`href=["']([^"']+)["']`), "href"},
-		{regexp.MustCompile(`src=["']([^"']+)["']`), "src"},
-		{regexp.MustCompile(`srcset=["']([^"']+)["']`), "srcset"},
-		{regexp.MustCompile(`url\(["']?([^"')]+)["']?\)`), "css-url"},
-		{regexp.MustCompile(`action=["']([^"']+)["']`), "form-action"},
-		{regexp.MustCompile(`content=["'](https?://[^"']+)["']`), "meta"},
-		{regexp.MustCompile(`https?://[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+[^\s"'<>]*`), "inline"},
-	}
-
-	for _, p := range patterns {
-		matches := p.regex.FindAllStringSubmatch(html, -1)
-		for _, match := range matches {
-			if len(match) < 2 {
-				continue
-			}
-			urlStr := match[1]
-
-			if p.source == "srcset" {
-				parts := strings.Split(urlStr, ",")
-				for _, part := range parts {
-					part = strings.TrimSpace(part)
-					fields := strings.Fields(part)
-					if len(fields) > 0 {
-						addDomain(domainMap, fields[0], p.source)
-					}
-				}
-				continue
-			}
-
-			addDomain(domainMap, urlStr, p.source)
-		}
-	}
-
-	var result []DomainInfo
-	for domain, sources := range domainMap {
-		sourceList := make([]string, 0, len(sources))
-		for s := range sources {
-			sourceList = append(sourceList, s)
-		}
-		sort.Strings(sourceList)
-
-		isExternal := !strings.HasSuffix(domain, targetDomain) &&
-			!strings.HasSuffix(targetDomain, domain) &&
-			domain != targetDomain
-
-		result = append(result, DomainInfo{
-			Domain:   domain,
-			Count:    len(sources),
-			Sources:  sourceList,
-			External: isExternal,
-		})
-	}
-
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].External != result[j].External {
-			return result[i].External
-		}
-		if result[i].Count != result[j].Count {
-			return result[i].Count > result[j].Count
-		}
-		return result[i].Domain < result[j].Domain
-	})
-
-	return result
-}
-
-func addDomain(domainMap map[string]map[string]bool, urlStr string, source string) {
-	parsed, err := url.Parse(strings.TrimSpace(urlStr))
-	if err != nil {
-		return
-	}
-
-	host := parsed.Hostname()
-	if host == "" {
-		return
-	}
-
-	if isIP(host) || host == "localhost" {
-		return
-	}
-
-	if !strings.Contains(host, ".") {
-		return
-	}
-
-	if domainMap[host] == nil {
-		domainMap[host] = make(map[string]bool)
-	}
-	domainMap[host][source] = true
 }
 
 func isIP(host string) bool {
