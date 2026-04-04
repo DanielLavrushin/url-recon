@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
@@ -61,8 +62,28 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 
 	onProgress("Loading page", 0, 0)
 
+	// Collect domains from network requests via CDP
+	networkDomains := make(map[string]map[string]bool)
+	var netMu sync.Mutex
+	chromedp.ListenTarget(tabCtx, func(ev interface{}) {
+		if req, ok := ev.(*network.EventRequestWillBeSent); ok {
+			if parsed, err := url.Parse(req.Request.URL); err == nil {
+				host := parsed.Hostname()
+				if host != "" && !isIP(host) && host != "localhost" && strings.Contains(host, ".") {
+					netMu.Lock()
+					if networkDomains[host] == nil {
+						networkDomains[host] = make(map[string]bool)
+					}
+					networkDomains[host]["network"] = true
+					netMu.Unlock()
+				}
+			}
+		}
+	})
+
 	var html string
 	err = chromedp.Run(tabCtx,
+		network.Enable(),
 		chromedp.Navigate(targetURL),
 		WaitWithTimeout(tabCtx, 5*time.Second),
 		chromedp.OuterHTML("html", &html),
@@ -73,6 +94,55 @@ func Scan(ctx context.Context, targetURL string, onProgress ProgressFunc) (*Resu
 
 	onProgress("Extracting domains", 0, 0)
 	domains := extractDomains(html, targetDomain)
+
+	// Merge network-captured domains into results
+	netMu.Lock()
+	existingDomains := make(map[string]int)
+	for i, d := range domains {
+		existingDomains[d.Domain] = i
+	}
+	for host, sources := range networkDomains {
+		if idx, exists := existingDomains[host]; exists {
+			// Add "network" source to existing domain
+			found := false
+			for _, s := range domains[idx].Sources {
+				if s == "network" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				domains[idx].Sources = append(domains[idx].Sources, "network")
+				domains[idx].Count = len(domains[idx].Sources)
+			}
+		} else {
+			sourceList := make([]string, 0, len(sources))
+			for s := range sources {
+				sourceList = append(sourceList, s)
+			}
+			isExternal := !strings.HasSuffix(host, targetDomain) &&
+				!strings.HasSuffix(targetDomain, host) &&
+				host != targetDomain
+			domains = append(domains, DomainInfo{
+				Domain:   host,
+				Count:    len(sourceList),
+				Sources:  sourceList,
+				External: isExternal,
+			})
+		}
+	}
+	netMu.Unlock()
+
+	// Re-sort after merge
+	sort.Slice(domains, func(i, j int) bool {
+		if domains[i].External != domains[j].External {
+			return domains[i].External
+		}
+		if domains[i].Count != domains[j].Count {
+			return domains[i].Count > domains[j].Count
+		}
+		return domains[i].Domain < domains[j].Domain
+	})
 
 	onProgress("Resolving DNS", 0, len(domains))
 	resolveDomainInfo(domains, onProgress)
